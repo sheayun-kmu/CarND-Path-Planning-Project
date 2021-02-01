@@ -126,7 +126,7 @@ int main() {
 
             double ref_x_prev = previous_path_x[prev_size - 2];
             double ref_y_prev = previous_path_y[prev_size - 2];
-            ref_yaw = atan2(ref_y - ref_y_prev, ref_x = ref_x_prev);
+            ref_yaw = atan2(ref_y - ref_y_prev, ref_x - ref_x_prev);
 
             ptsx.push_back(ref_x_prev);
             ptsx.push_back(ref_x);
@@ -178,9 +178,9 @@ int main() {
           double target_dist = distance(0.0, 0.0, target_x, target_y);
 
           double x_add_on = 0.0;
-          double N = (target_dist / (0.02 * ref_vel / 2.24));
 
           for (int i = 1; i <= 50 - previous_path_x.size(); i++) {
+            double N = (target_dist / (0.02 * ref_vel / 2.24));
             double x_point = x_add_on + (target_x) / N;
             double y_point = s(x_point);
 
