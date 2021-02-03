@@ -51,8 +51,10 @@ int main() {
     map_waypoints_dy.push_back(d_y);
   }
 
+  double ref_vel = 0.0;
+
   h.onMessage([&map_waypoints_x, &map_waypoints_y, &map_waypoints_s,
-               &map_waypoints_dx, &map_waypoints_dy]
+               &map_waypoints_dx, &map_waypoints_dy, &ref_vel]
               (uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
@@ -102,10 +104,32 @@ int main() {
            */
 
           int lane = 1;
-          double ref_vel = 49.5;
 
           vector<double> ptsx;
           vector<double> ptsy;
+
+          bool too_close = false;
+          double target_vel;
+          for (int i = 0; i < sensor_fusion.size(); i++) {
+            double other_d = sensor_fusion[i][6];
+            if (other_d > lane * 4 && other_d < lane * 4 + 4) {
+              double other_s = sensor_fusion[i][5];
+              double other_vx = sensor_fusion[i][3];
+              double other_vy = sensor_fusion[i][4];
+              double other_v = sqrt(other_vx * other_vx + other_vy * other_vy);
+              double other_pred = other_s + other_v * 0.02 * (double) prev_size;
+              if (other_pred > car_s && other_pred - car_s < 40.0) {
+                too_close = true;
+                target_vel = other_v;
+              }
+            }
+          }
+
+          if (too_close && ref_vel > target_vel) {
+            ref_vel -= 0.324;
+          } else if (ref_vel < 49.5) {
+            ref_vel += 0.224;
+          }
 
           double ref_x = car_x;
           double ref_y = car_y;
