@@ -4,10 +4,6 @@
 #include "planner.h"
 #include "helpers.h"
 
-
-
-#include <iostream>
-
 using std::vector;
 
 Behaviour::Behaviour(int lane,
@@ -26,11 +22,12 @@ Behaviour::Behaviour(int lane,
 Behaviour::~Behaviour() {}
 
 void Behaviour::set_ego_status(double ego_s, double ego_d, double ego_speed,
-                               double ego_target_vel, double ego_pred_s,
+                               double ego_target_vel,
+                               double ego_pred_s, double ego_pred_d,
                                vector<vector<double>>& sf, int timestep) {
   s = ego_s;
   d = ego_d;
-  v = ego_speed;
+  v = ego_speed / Config::mps_to_mph; // convert to m/s
   target_vel = ego_target_vel;
   determined_timestep = timestep;
   if (ego_pred_s > ego_s) {
@@ -38,6 +35,7 @@ void Behaviour::set_ego_status(double ego_s, double ego_d, double ego_speed,
   } else {
     predicted_s = ego_s;
   }
+  predicted_d = ego_pred_d;
   for (int i = 0; i < 3; i++) {
     agents_by_lane[i].clear();
   }
@@ -63,7 +61,9 @@ void Behaviour::set_ego_status(double ego_s, double ego_d, double ego_speed,
 void Behaviour::determine_next(void) {
   Agent agent_ahead;
   behaviour next_behaviour;
-  double overtake_dist = 1.2 * v * Config::front_time_gap;
+  double overtake_dist = 1.5 * v * Config::front_time_gap;
+  double left_threshold;
+  double right_threshold;
   switch (current_behaviour) {
     // if we were keeping the lane, we check whether we want to overtake
     case keep_lane:
@@ -73,19 +73,33 @@ void Behaviour::determine_next(void) {
         if (agent_ahead.v < target_vel &&
             agent_ahead.s - predicted_s < overtake_dist) {
           // check the speed we can get by changing lanes
-          double left_speed = lane_speed(current_lane - 1);
-          double right_speed = lane_speed(current_lane + 1);
+          double left_speed = -1.0;
+          double right_speed = -1.0;
+          if (can_change_lane(current_lane - 1) &&
+              check_ahead(current_lane - 1).s > agent_ahead.s) {
+            left_speed = lane_speed(current_lane - 1);
+          }
+          if (can_change_lane(current_lane + 1) &&
+              check_ahead(current_lane + 1).s > agent_ahead.s) {
+            right_speed = lane_speed(current_lane + 1);
+          }
           // if both lane change is possible, take the more beneficial one
+          double curr_lane_speed = lane_speed(current_lane);
           if (left_speed >= 0.0 && right_speed >= 0.0) {
-            if (left_speed < right_speed) {
+            if (left_speed < right_speed &&
+                right_speed > curr_lane_speed) {
               target_lane = current_lane + 1;
-            } else {
+            } else if (left_speed > curr_lane_speed) {
               target_lane = current_lane - 1;
             }
           } else if (left_speed >= 0.0) { // only left change possible
-            target_lane = current_lane - 1;
+            if (left_speed > curr_lane_speed) {
+              target_lane = current_lane - 1;
+            }
           } else if (right_speed >= 0.0) { // only right change possible
-            target_lane = current_lane + 1;
+            if (right_speed > curr_lane_speed) {
+              target_lane = current_lane + 1;
+            }
           }
         } // end if overtaking maneuver
       } // end if blocked by another vehicle
@@ -95,14 +109,18 @@ void Behaviour::determine_next(void) {
         Agent target_ahead = check_ahead(1);
         if (can_change_lane(1)) { // can change to middle lane
           if (target_ahead.lane < 0 ||
-              target_ahead.s - predicted_s > overtake_dist) {
+              target_ahead.s - predicted_s > 2.5 * overtake_dist) {
             // middle lane clear
             target_lane = 1;
           } else {
             // other side lane clear - consecutive lane change planned
-            double other_speed = lane_speed(other_side_lane);
-            if (other_speed > v + 1.0) {
-              target_lane = 1;
+            if (can_change_lane(other_side_lane)) {
+              Agent other_lane_agt = check_ahead(other_side_lane);
+              double other_speed = lane_speed(other_side_lane);
+              if (other_speed > lane_speed(current_lane) &&
+                  other_lane_agt.s - predicted_s > 2.5 * overtake_dist) {
+                target_lane = 1;
+              }
             }
           }
         }
@@ -117,9 +135,14 @@ void Behaviour::determine_next(void) {
     // the lane change is complete
     case lane_change_left:
     case lane_change_right:
-      current_lane = (int) (d / Config::lane_width);
-      if (current_lane == target_lane) {
+      left_threshold = target_lane * Config::lane_width
+                     + 0.5 * Config::car_width;
+      right_threshold = (target_lane + 1) * Config::lane_width
+                      - 0.5 * Config::car_width;
+      if (predicted_d >= left_threshold &&
+          predicted_d <= right_threshold) {
         next_behaviour = keep_lane;
+        current_lane = target_lane;
       } else {
         next_behaviour = current_behaviour;
       }
@@ -135,11 +158,11 @@ vector<vector<double>> Behaviour::get_waypoints(void) {
   double target_d = Config::lane_width * ((double) target_lane + 0.5);
   double delta_s;
   if (current_behaviour == keep_lane || v < 1.0) {
-    delta_s = 30.0;
+    delta_s = 40.0;
   } else {
     delta_s = v * Config::lane_change_time;
-    if (delta_s < 30.0) {
-      delta_s = 30.0;
+    if (delta_s < 40.0) {
+      delta_s = 40.0;
     }
   }
   double dist1 = 1.0 * delta_s;
@@ -198,26 +221,28 @@ Agent Behaviour::check_behind(int lane) {
 bool Behaviour::can_change_lane(int lane) {
   bool behind_clear = false;
   bool ahead_clear = false;
-  // check the vehicle behind ego, in the target lane
-  double ego_pred_s = predicted_s
-                    + v * Config::lane_change_time;
-  Agent behind = check_behind(lane);
-  Agent ahead = check_ahead(lane);
-  if (behind.lane >= 0) { // if there's a car coming from behind
-    double behind_pred_s = behind.s + behind.v * Config::lane_change_time;
-    if (ego_pred_s - behind_pred_s > Config::lane_change_safety_margin) {
+  if (0 <= lane && lane < Config::number_of_lanes) {
+    // check the vehicle behind ego, in the target lane
+    double ego_pred_s = predicted_s
+                      + v * Config::lane_change_time;
+    Agent behind = check_behind(lane);
+    Agent ahead = check_ahead(lane);
+    if (behind.lane >= 0) { // if there's a car coming from behind
+      double behind_pred_s = behind.s + behind.v * Config::lane_change_time;
+      if (ego_pred_s - behind_pred_s > Config::lane_change_safety_margin) {
+        behind_clear = true;
+      }
+    } else {
       behind_clear = true;
     }
-  } else {
-    behind_clear = true;
-  }
-  if (ahead.lane >= 0) { // if there's a car ahead
-    double ahead_pred_s = ahead.s + ahead.v * Config::lane_change_time;
-    if (ahead_pred_s - ego_pred_s > Config::lane_change_safety_margin) {
+    if (ahead.lane >= 0) { // if there's a car ahead
+      double ahead_pred_s = ahead.s + ahead.v * Config::lane_change_time;
+      if (ahead_pred_s - ego_pred_s > Config::lane_change_safety_margin) {
+        ahead_clear = true;
+      }
+    } else {
       ahead_clear = true;
     }
-  } else {
-    ahead_clear = true;
   }
   return behind_clear && ahead_clear;
 }
@@ -227,8 +252,6 @@ double Behaviour::lane_speed(int lane) {
   // impossible (or prohibitive) lane change
   double speed;
   if (lane < 0 || lane >= Config::number_of_lanes) {
-    speed = -1.0;
-  } else if (!can_change_lane(lane)) {
     speed = -1.0;
   } else {
     // define the speed as the maximum speed we can take in that lane

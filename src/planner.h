@@ -10,32 +10,34 @@ struct Config {
 public:
   static const constexpr int number_of_lanes = 3;
   static const constexpr double lane_width = 4.0;
+  static const constexpr double car_width = 3.0;
   static const constexpr int wp_to_keep = 50;
   static const constexpr double dt = 1.0 / (double) wp_to_keep;
   static const constexpr double mps_to_mph = 3600.0 / 1000.0 / 1.609;
   static const constexpr double max_speed = 49.5;
   static const constexpr double front_time_gap = 1.0;
-  static const constexpr double max_acceleration = 6.0;
+  static const constexpr double max_acceleration = 5.0;
   static const constexpr double max_deceleration = 9.0;
   static const constexpr double lane_change_time = 0.5;
-  static const constexpr double lane_change_safety_margin = 20.0;
+  static const constexpr double lane_change_safety_margin = 10.0;
   static const constexpr double lookahead_dist = 50.0;
 };
 
 struct Agent {
 public:
   int lane = -1;
-  double s = 0.0;
-  double v = 0.0;
+  double s = 9999.0;
+  double v = 2.0 * Config::max_speed / Config::mps_to_mph;
 };
 
 class Behaviour {
-private:
+public:
   enum behaviour {
     keep_lane,
     lane_change_left,
     lane_change_right,
   };
+private:
   vector<double> map_waypoints_s;
   vector<double> map_waypoints_x;
   vector<double> map_waypoints_y;
@@ -45,6 +47,7 @@ private:
   double s;
   double predicted_s;
   double d;
+  double predicted_d;
   double v;
   double target_vel;
   // vector<vector<double>> sensor_fusion;
@@ -57,10 +60,13 @@ public:
   );
   ~Behaviour();
   void set_ego_status(double ego_s, double ego_d, double ego_speed,
-                      double ego_target_vel, double ego_pred_s,
+                      double ego_target_vel,
+                      double ego_pred_s, double ego_pred_d,
                       vector<vector<double>>& sf, int timestep);
   void determine_next(void);
   vector<vector<double>> get_waypoints(void);
+  inline behaviour get_current_behaviour(void) { return current_behaviour; }
+  inline int get_current_lane(void) { return current_lane; }
   inline int get_target_lane(void) { return target_lane; }
   Agent check_ahead(int lane);
   Agent check_behind(int lane);

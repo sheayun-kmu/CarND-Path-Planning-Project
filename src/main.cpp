@@ -114,7 +114,8 @@ int main() {
           // (based on the situation given by sensor fusion)
           int prev_size = previous_path_x.size();
           bp.set_ego_status(car_s, car_d, car_speed,
-                            target_vel, end_path_s, sf, prev_size);
+                            target_vel, end_path_s, end_path_d,
+                            sf, prev_size);
           bp.determine_next();
           // determine which lane to follow (based on bahaviour)
           vector<vector<double>> wp = bp.get_waypoints();
@@ -126,8 +127,26 @@ int main() {
           Path p = Path(px, py, wp, car_x, car_y, car_yaw);
           // plan motion (vel and acc in the target lane)
           int target_lane = bp.get_target_lane();
-          Agent agent_ahead = bp.check_ahead(target_lane);
-          current_vel = p.motion_plan(end_path_s, agent_ahead,
+          // now let agent_ahead point to the vehicle we want to
+          // keep speed at
+          Agent curr_ahead;
+          Agent tgt_ahead;
+          Agent tracking;
+          tgt_ahead = bp.check_ahead(target_lane);
+          if (bp.get_current_behaviour() == Behaviour::lane_change_left ||
+              bp.get_current_behaviour() == Behaviour::lane_change_right) {
+            curr_ahead = bp.check_ahead(bp.get_current_lane());
+          }
+          if (curr_ahead.lane < 0) {
+            tracking = tgt_ahead;
+          } else if (tgt_ahead.lane < 0) {
+            tracking = curr_ahead;
+          } else if (curr_ahead.s < tgt_ahead.s) {
+            tracking = curr_ahead;
+          } else {
+            tracking = tgt_ahead;
+          }
+          current_vel = p.motion_plan(end_path_s, tracking,
                                       current_vel, target_vel);
           vector<double> next_x_vals = p.get_path_x();
           vector<double> next_y_vals = p.get_path_y();
