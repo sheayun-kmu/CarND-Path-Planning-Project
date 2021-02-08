@@ -4,6 +4,10 @@
 #include "planner.h"
 #include "helpers.h"
 
+
+
+#include <iostream>
+
 using std::vector;
 
 Behaviour::Behaviour(int lane,
@@ -59,32 +63,46 @@ void Behaviour::set_ego_status(double ego_s, double ego_d, double ego_speed,
 void Behaviour::determine_next(void) {
   Agent agent_ahead;
   behaviour next_behaviour;
-
+  double overtake_dist = 1.2 * v * Config::front_time_gap;
   switch (current_behaviour) {
     // if we were keeping the lane, we check whether we want to overtake
     case keep_lane:
       agent_ahead = check_ahead(current_lane);
-      next_behaviour = current_behaviour;
-      bool lane_change;
+      next_behaviour = keep_lane;
       if (agent_ahead.lane >= 0) { // an agent found in the same lane
-        // a slower vehicle in front that closer than a threshold
         if (agent_ahead.v < target_vel &&
-            agent_ahead.s - s < Config::dist_overtake) {
-          bool change_planned = false;
-          if (!change_planned && current_lane - 1 >= 0) {
-            if (lane_change_desirable(
-                  current_lane - 1, agent_ahead.s, agent_ahead.v
-            )) {
-              target_lane = current_lane - 1;
-              change_planned = true;
-            }
-          }
-          if (!change_planned && current_lane + 1 < Config::number_of_lanes) {
-            if (lane_change_desirable(
-                  current_lane + 1, agent_ahead.s, agent_ahead.v
-            )) {
+            agent_ahead.s - predicted_s < overtake_dist) {
+          // check the speed we can get by changing lanes
+          double left_speed = lane_speed(current_lane - 1);
+          double right_speed = lane_speed(current_lane + 1);
+          // if both lane change is possible, take the more beneficial one
+          if (left_speed >= 0.0 && right_speed >= 0.0) {
+            if (left_speed < right_speed) {
               target_lane = current_lane + 1;
-              change_planned = true;
+            } else {
+              target_lane = current_lane - 1;
+            }
+          } else if (left_speed >= 0.0) { // only left change possible
+            target_lane = current_lane - 1;
+          } else if (right_speed >= 0.0) { // only right change possible
+            target_lane = current_lane + 1;
+          }
+        } // end if overtaking maneuver
+      } // end if blocked by another vehicle
+      if (target_lane == current_lane && current_lane != 1) {
+        // we prefer to keep the center lane because of its flexibility
+        int other_side_lane = 2 - current_lane;
+        Agent target_ahead = check_ahead(1);
+        if (can_change_lane(1)) { // can change to middle lane
+          if (target_ahead.lane < 0 ||
+              target_ahead.s - predicted_s > overtake_dist) {
+            // middle lane clear
+            target_lane = 1;
+          } else {
+            // other side lane clear - consecutive lane change planned
+            double other_speed = lane_speed(other_side_lane);
+            if (other_speed > v + 1.0) {
+              target_lane = 1;
             }
           }
         }
@@ -106,7 +124,6 @@ void Behaviour::determine_next(void) {
         next_behaviour = current_behaviour;
       }
       break;
-
     default:
       break;
   }
@@ -116,17 +133,28 @@ void Behaviour::determine_next(void) {
 vector<vector<double>> Behaviour::get_waypoints(void) {
   vector<vector<double>> wp;
   double target_d = Config::lane_width * ((double) target_lane + 0.5);
-  double middle_d = (d + target_d) / 2.0;
+  double delta_s;
+  if (current_behaviour == keep_lane || v < 1.0) {
+    delta_s = 30.0;
+  } else {
+    delta_s = v * Config::lane_change_time;
+    if (delta_s < 30.0) {
+      delta_s = 30.0;
+    }
+  }
+  double dist1 = 1.0 * delta_s;
+  double dist2 = 2.0 * delta_s;
+  double dist3 = 3.0 * delta_s;
   vector<double> next_wp0 = getXY(
-    predicted_s + 30, target_d,
+    predicted_s + dist1, target_d,
     map_waypoints_s, map_waypoints_x, map_waypoints_y
   );
   vector<double> next_wp1 = getXY(
-    predicted_s + 60, target_d,
+    predicted_s + dist2, target_d,
     map_waypoints_s, map_waypoints_x, map_waypoints_y
   );
   vector<double> next_wp2 = getXY(
-    predicted_s + 90, target_d,
+    predicted_s + dist3, target_d,
     map_waypoints_s, map_waypoints_x, map_waypoints_y
   );
   wp.push_back(next_wp0);
@@ -167,22 +195,55 @@ Agent Behaviour::check_behind(int lane) {
   return nearest;
 }
 
-bool Behaviour::lane_change_desirable(int lane,
-                                      double check_s, double check_v) {
-  Agent agent_behind = check_behind(lane);
-  bool desirable = false;
-  if (agent_behind.lane < 0 ||
-      predicted_s - agent_behind.s >= Config::overtake_margin1 ||
-      (predicted_s - agent_behind.s >= Config::overtake_margin2 &&
-       agent_behind.v < v)
-  ) {
-    Agent agent_ahead = check_ahead(lane);
-    if (agent_ahead.lane < 0 ||
-        (agent_ahead.s > check_s && agent_ahead.v > check_v)) {
-      desirable = true;
+bool Behaviour::can_change_lane(int lane) {
+  bool behind_clear = false;
+  bool ahead_clear = false;
+  // check the vehicle behind ego, in the target lane
+  double ego_pred_s = predicted_s
+                    + v * Config::lane_change_time;
+  Agent behind = check_behind(lane);
+  Agent ahead = check_ahead(lane);
+  if (behind.lane >= 0) { // if there's a car coming from behind
+    double behind_pred_s = behind.s + behind.v * Config::lane_change_time;
+    if (ego_pred_s - behind_pred_s > Config::lane_change_safety_margin) {
+      behind_clear = true;
+    }
+  } else {
+    behind_clear = true;
+  }
+  if (ahead.lane >= 0) { // if there's a car ahead
+    double ahead_pred_s = ahead.s + ahead.v * Config::lane_change_time;
+    if (ahead_pred_s - ego_pred_s > Config::lane_change_safety_margin) {
+      ahead_clear = true;
+    }
+  } else {
+    ahead_clear = true;
+  }
+  return behind_clear && ahead_clear;
+}
+
+double Behaviour::lane_speed(int lane) {
+  // speed defined to be negative in case of an
+  // impossible (or prohibitive) lane change
+  double speed;
+  if (lane < 0 || lane >= Config::number_of_lanes) {
+    speed = -1.0;
+  } else if (!can_change_lane(lane)) {
+    speed = -1.0;
+  } else {
+    // define the speed as the maximum speed we can take in that lane
+    Agent agt_ahead = check_ahead(lane);
+    if (agt_ahead.lane < 0) {
+      speed = Config::max_speed;
+    } else {
+      if (agt_ahead.s > predicted_s + Config::lookahead_dist) {
+        speed = Config::max_speed;
+      } else {
+        speed = agt_ahead.v;
+      }
     }
   }
-  return desirable;
+  return speed;
 }
 
 Path::Path(vector<double>& prev_x, vector<double>& prev_y,
@@ -190,7 +251,7 @@ Path::Path(vector<double>& prev_x, vector<double>& prev_y,
            double car_x, double car_y, double car_yaw) {
   path_x.clear();
   path_y.clear();
-  int prev_size = prev_x.size();
+  prev_size = prev_x.size();
   // put waypoints in the previously generated (bot not yet traveled) path
   // into the set of current path being generated
   for (int i = 0; i < prev_size; i++) {
@@ -239,48 +300,59 @@ Path::Path(vector<double>& prev_x, vector<double>& prev_y,
 
 Path::~Path() {}
 
-double Path::motion_plan(double car_s, Agent agent_ahead,
+double Path::motion_plan(double ego_pred_s, Agent agent_ahead,
                          double ref_vel, double target_vel) {
+  // calculate the number of points to generate
+  int pts = Config::wp_to_keep - prev_size;
+  double desired_acc;
+  // look at the vehicle ahead of ego in the same lane
+  // (only the closest one in the same lane is included by the caller, if any)
   if (agent_ahead.lane >= 0) {
-    double dist = agent_ahead.s - car_s;
-    if (dist < Config::dist_threshold_1) {
-      // if the car in front is very near, take its half speed
-      target_vel = 0.5 * Config::mps_to_mph * agent_ahead.v;
-    } else if (dist < Config::dist_threshold_2) {
-      // if the car in front is very near, take its half speed
-      target_vel = Config::mps_to_mph * agent_ahead.v;
-    }
+    // dubious meaning:
+    // (1) time it takes to reach the front vehicle's position (at current v)
+    // (2) time it takes to provide the desired distance to the front vehicle
+    double dt = Config::front_time_gap;
+    // calculate distances traveled by ego & agent, respectively
+    // (in a given period of time)
+    double ego_v = ref_vel / Config::mps_to_mph;
+    double agt_v = agent_ahead.v;
+    double ego_t = ego_pred_s + ego_v * dt;
+    double agt_t = agent_ahead.s + agt_v * dt;
+    // calculate target distance to keep (distance to travel in dt)
+    double target_dist = dt * ego_v;
+    // calculate the desired acceleration
+    desired_acc = 2 * (agt_t - ego_t - target_dist) / (dt * dt);
+  } else { // set the desired accleration to the maximum value
+    desired_acc = Config::max_acceleration;
   }
-  // adjust reference velocity - whether to speed up or down
-  if (ref_vel > target_vel) {
-    ref_vel -= Config::acceleration;
-  } else if (ref_vel < target_vel) {
-    ref_vel += Config::acceleration;
+  // trim acceleration value if it's too much
+  if (desired_acc > Config::max_acceleration) {
+    desired_acc = Config::max_acceleration;
+  } else if (desired_acc < -1.0 * Config::max_deceleration) {
+    desired_acc = -1.0 * Config::max_deceleration;
   }
-  // set target point to 30m ahead (only x axis)
-  double target_x = 30.0;
-  double target_y = sp(target_x);
-  double target_dist = distance(0.0, 0.0, target_x, target_y);
-  double x_add_on = 0.0;
-
-  for (int i = 1; i <= 50 - path_x.size(); i++) {
-    double N = (target_dist / (Config::dt * ref_vel / Config::mps_to_mph));
-    double x_point = x_add_on + (target_x) / N;
-    double y_point = sp(x_point);
-
-    x_add_on = x_point;
-
-    double x_ref = x_point;
-    double y_ref = y_point;
-
-    x_point = x_ref * cos(ref_yaw) - y_ref * sin(ref_yaw);
-    y_point = x_ref * sin(ref_yaw) + y_ref * cos(ref_yaw);
-
-    x_point += ref_x;
-    y_point += ref_y;
-
+  // if we are going to get over the target speed, we
+  // reduce the acceleration to meet the target
+  double required_acc = (target_vel - ref_vel) / Config::mps_to_mph;
+  if (desired_acc * pts * Config::dt > required_acc) {
+    desired_acc = required_acc / (pts * Config::dt);
+  }
+  // generate waypoints to follow
+  double vel = ref_vel / Config::mps_to_mph;
+  // set a target point (in X-Y coordinate)
+  double t_x = 0.5 * desired_acc * (pts * Config::dt) * (pts * Config::dt);
+  double t_y = sp(t_x);
+  double t_d = distance(0.0, 0.0, t_x, t_y);
+  double px = 0.0;
+  double py;
+  for (int i = 0; i < pts; i++) {
+    vel += desired_acc * Config::dt;
+    px += vel * Config::dt;
+    py = sp(px);
+    double x_point = ref_x + px * cos(ref_yaw) - py * sin(ref_yaw);
+    double y_point = ref_y + px * sin(ref_yaw) + py * cos(ref_yaw);
     path_x.push_back(x_point);
     path_y.push_back(y_point);
   }
-  return ref_vel;
+  return vel * Config::mps_to_mph;
 }

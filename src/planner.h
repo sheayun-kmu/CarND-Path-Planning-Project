@@ -10,15 +10,16 @@ struct Config {
 public:
   static const constexpr int number_of_lanes = 3;
   static const constexpr double lane_width = 4.0;
-  static const constexpr double dt = 1.0 / 50.0;
-  static const constexpr double max_speed = 89.5;
+  static const constexpr int wp_to_keep = 50;
+  static const constexpr double dt = 1.0 / (double) wp_to_keep;
   static const constexpr double mps_to_mph = 3600.0 / 1000.0 / 1.609;
-  static const constexpr double dist_threshold_2 = 40.0;
-  static const constexpr double dist_threshold_1 = 0.5 * dist_threshold_2;
-  static const constexpr double dist_overtake = 1.5 * dist_threshold_2;
-  static const constexpr double overtake_margin1 = 0.3 * dist_overtake;
-  static const constexpr double overtake_margin2 = 0.1 * dist_overtake;
-  static const constexpr double acceleration = 0.15 * mps_to_mph;
+  static const constexpr double max_speed = 49.5;
+  static const constexpr double front_time_gap = 1.0;
+  static const constexpr double max_acceleration = 6.0;
+  static const constexpr double max_deceleration = 9.0;
+  static const constexpr double lane_change_time = 0.5;
+  static const constexpr double lane_change_safety_margin = 20.0;
+  static const constexpr double lookahead_dist = 50.0;
 };
 
 struct Agent {
@@ -63,11 +64,13 @@ public:
   inline int get_target_lane(void) { return target_lane; }
   Agent check_ahead(int lane);
   Agent check_behind(int lane);
-  bool lane_change_desirable(int lane, double check_s, double check_v);
+  bool can_change_lane(int lane);
+  double lane_speed(int lane);
 };
 
 class Path {
 private:
+  int prev_size;
   double ref_x, ref_y, ref_prev_x, ref_prev_y;
   double ref_yaw;
   double ref_vel;
@@ -79,7 +82,7 @@ public:
        vector<vector<double>>& wp,
        double car_x, double car_y, double car_yaw);
   ~Path();
-  double motion_plan(double car_s, Agent agent_ahead,
+  double motion_plan(double ego_pred_s, Agent agent_ahead,
                      double ref_vel, double target_vel);
   vector<double> get_path_x(void) { return path_x; }
   vector<double> get_path_y(void) { return path_y; }
