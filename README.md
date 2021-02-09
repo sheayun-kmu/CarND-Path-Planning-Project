@@ -1,63 +1,122 @@
-# CarND-Path-Planning-Project
-Self-Driving Car Engineer Nanodegree Program
-   
-### Simulator.
-You can download the Term3 Simulator which contains the Path Planning Project from the [releases tab (https://github.com/udacity/self-driving-car-sim/releases/tag/T3_v1.2).  
+# Project: Path Planning
 
-To run the simulator on Mac/Linux, first make the binary file executable with the following command:
-```shell
-sudo chmod u+x {simulator_file_name}
+### Udacity Self-Driving Car Engineer Nanodegree Program
+
+--
+
+The goal of this project are the following:
+
+* Write (in C++) a path planner (including a trajectory generator) that can be used to guide the simulated vehicle in driving on a highway provided by Udacity [Term 3 Simulator](https://github.com/udacity/self-driving-car-sim/releases/tag/T3_v1.2).
+* Integrate the path planner into a uWebSocket-based server and verify the effectiveness of the path planning (and motion planning) algorithm.
+
+[//]: # (Image References)
+[simulator]: ./images/simulator.png
+[overtaking]: ./images/overtaking.png
+
+## Rubric Points
+
+* The ego vehicle (simulated car) should try to drive as close as possible to the 50 MPH speed limit, which means it should try to pass slower traffic when possible.
+* The car should avoid hitting other cars at all cost as well as driving inside of the marked road lanes at all times unless switching from one lane to another.
+* The car should not experience total acceleration of over 10 m/s^2 and jerk of over 10 m/s^3.
+
+The complete rubric points for this project can be found [here](https://review.udacity.com/#!/rubrics/1971/view).
+
+## Program Build & Execution
+
+In the project root directory, execute (in a shell) the following sequence of commands.
+
+```
+# mkdir build
+# cd build
+# cmake .. && make
+# ./path_planning
 ```
 
-### Goals
-In this project your goal is to safely navigate around a virtual highway with other traffic that is driving +-10 MPH of the 50 MPH speed limit. You will be provided the car's localization and sensor fusion data, there is also a sparse map list of waypoints around the highway. The car should try to go as close as possible to the 50 MPH speed limit, which means passing slower traffic when possible, note that other cars will try to change lanes too. The car should avoid hitting other cars at all cost as well as driving inside of the marked road lanes at all times, unless going from one lane to another. The car should be able to make one complete loop around the 6946m highway. Since the car is trying to go 50 MPH, it should take a little over 5 minutes to complete 1 loop. Also the car should not experience total acceleration over 10 m/s^2 and jerk that is greater than 10 m/s^3.
+Besides, run the above mentioned simulator on the same machine, which connects and sends requests at port 4567 of the `localhost`. The program `path_planning` should listen to this port, connect, and responds to the simulator's requests by sending two json-encoded lists of waypoints: `"next_x"` and `"next_y"`, which correspond to the X & Y coordinates of the waypoints in the global coordinate system.
 
-#### The map of the highway is in data/highway_map.txt
-Each waypoint in the list contains  [x,y,s,dx,dy] values. x and y are the waypoint's map coordinate position, the s value is the distance along the road to get to that waypoint in meters, the dx and dy values define the unit normal vector pointing outward of the highway loop.
+## Input Data
 
-The highway's waypoints loop around so the frenet s value, distance along the road, goes from 0 to 6945.554.
+#### The map of the virtual highway
 
-## Basic Build Instructions
+The map is provided by a data file [data/highway_map.csv](./data/highway_map.csv), which contains a list of `[x, y, s, dx, dy]` values. The `x` and `y` are the waypoint's map coordinate values (center of the road), the `s` value the distance along the road to get to thay waypoint (in meters), the `dx` and `dy` values define the unit normal vector pointing outward of the highway loop. The highway's waypoints wrap around so that the `s` value ranges from 0.0 to 6945.554.
 
-1. Clone this repo.
-2. Make a build directory: `mkdir build && cd build`
-3. Compile: `cmake .. && make`
-4. Run it: `./path_planning`.
+#### The ego vehicle's localization
 
-Here is the data provided from the Simulator to the C++ Program
+Each of the request from the simulator contains the following set of values indicating the ego vehicle's localization information:
 
-#### Main car's localization Data (No Noise)
+* `x`: X value of the vehicle's location in the map coordinates
+* `y`: Y value of the vehicle's location in the map coordinates
+* `s`: The vehicle's longitudinal distance along the highway in the Frenet coordinates
+* `d`: The vehicle's lateral distance from the center of the highway in the Frenet coordinates
+* `yaw`: The vehicle's heading (represented in degrees)
+* `speed` The vehicle's driving speed (represented in MPH)
 
-["x"] The car's x position in map coordinates
+Besides, the simulator provides (json-encoded in the request) the following information regarding the previously planned motion:
 
-["y"] The car's y position in map coordinates
+* `previous_path_x`: X values of the waypoints in the previously generated path, which have not yet been visited
+* `previus_path_y`: Y values of the waypoints in the previously generated path, which have not yet been visited
+* `end_path_s`: The Frenet `s` value of the last waypoint in the previously generated path
+* `end_path_d`: The Frenet `d` value of the last waypoint in the previously generated path
 
-["s"] The car's s position in frenet coordinates
+#### The other vehicle's localization
 
-["d"] The car's d position in frenet coordinates
+The `sensor_fusion` field included in the request (from the simulator) contains other (visible) vehicles' localization information assumed to be obtained from sensor data and their fusion. The field consists of a list of agent (vehicle) data, which in turn consists of a list containing:
 
-["yaw"] The car's yaw angle in the map
+* `[0]`: the agent's identifier
+* `[1]`: X coordinate value of the agent (in the map coordniate system)
+* `[2]`: Y coordinate value of the agent (in the map coordniate system)
+* `[3]`: the agent's velocity in the X direction (in the map coordinate system)
+* `[4]`: the agent's velocity in the Y direction (in the map coordinate system)
+* `[5]`: the agent's `s` value of the Frenet coordinate system
+* `[6]`: the agent's `d` value of the Frenet coordinate system
 
-["speed"] The car's speed in MPH
+They should be used to determine which behaviour or which trajectory to take in planning the ego vehicle's motion.
 
-#### Previous path data given to the Planner
+## Path Planning Algorithm
 
-//Note: Return the previous list but with processed points removed, can be a nice tool to show how far along
-the path has processed since last time. 
+The path planning algorithm executes in two distinct steps: (1) behaviour planning to determine which behaviour (keep the current lane, switch to the left lane, etc.) the vehicle should take, and (2) motion planning to generate a feasible (and preferably smooth) trajectory that is followed by the vehicle.
 
-["previous_path_x"] The previous list of x points previously given to the simulator
+The behaviour planner is given all the information about the ego vehicle and its surrounding environment, as well as a target speed that the ego vehicle intends to achieve, every time the (server) program receives a request from the (client) simulator. It determines the next behaviour that the vehicle should take, based on its current status and traffic condition. The palnner is requested to generate a set of waypoints that will be used to guide the motion planner to generate a trajectory.
 
-["previous_path_y"] The previous list of y points previously given to the simulator
+The motion planner is then given a set of waypoints (part of the previously generated trajectory that the vehicle is yet to follow) along with the vehicle's pose (X, Y, and yaw). It is then requested to generate a new trajectory (by appending waypoints to the previously generated path so that the total waypoint contained in it is a vector of a certain predefined length), so that the vehicle is driven along the waypoints given by the behaviour planner. The motion planner is also responsible to determine the speed at which the vehicle can be driven without causing any trouble (coming into contact with other vehicles, violating acceleration and jerk constraints, and so on).
 
-#### Previous path's end s and d values 
+Finally, the generated path (consisting of a certain number of waypoints to be visited) is given as a response to the simulator's request. The simulator controls the vehicle so that it travels along the generated path by visiting the sequence of waypoints provided by the planner. At the next request period, any waypoints that are not yet visited are conveyed back to the server to assist future trajectory generation.
 
-["end_path_s"] The previous list's last point's frenet s value
+## Implementation
 
-["end_path_d"] The previous list's last point's frenet d value
+The main implementation is in the module `planner.cpp`, which defines two classes: `class Behaviour` for behaviour planning, and `class Path` for motion planning. The header is in a separate file `planner.h`.
 
-#### Sensor Fusion Data, a list of all other car's attributes on the same side of the road. (No Noise)
+In the header, we define a set of configuration values with constants, including the number of lanes and lane width, maximum highway speed, various distance parameters used in the algorithm, etc.
 
-["sensor_fusion"] A 2d vector of cars and then that car's [car's unique ID, car's x position in map coordinates, car's y position in map coordinates, car's x velocity in m/s, car's y velocity in m/s, car's s position in frenet coordinates, car's d position in frenet coordinates. 
+The header also defines `struct Agent`. It captures each agent vehicles captured by sensor fusion, with `lane` denoting the lane the vehicle is in, `s` the longitudinal distance, and `v` the vehicle's speed (in m/s). Note that the default values are set so that it is ahead of and faster than any other vehicle. Those values are used as sentinels in determining the lane's allowable speed when there are no agent vehicles ahead of ego in a specific lane.
+
+The behvaiour planner uses a simple set of three distinct type of behaviour: (1) keep the current lane (`keep_lane`), (2) switch to the left lane (`lane_change_left`), and (3) switch to the right lane (`lane_change_right`). 
+
+## Results
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ## Details
 
