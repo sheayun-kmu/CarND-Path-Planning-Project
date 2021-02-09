@@ -12,7 +12,7 @@ public:
   static const constexpr double lane_width = 4.0;
   static const constexpr double car_width = 3.0;
   static const constexpr int wp_to_keep = 50;
-  static const constexpr double dt = 1.0 / (double) wp_to_keep;
+  static const constexpr double dt = 0.02;
   static const constexpr double mps_to_mph = 3600.0 / 1000.0 / 1.609;
   static const constexpr double max_speed = 49.5;
   static const constexpr double front_time_gap = 1.0;
