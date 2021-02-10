@@ -2,8 +2,6 @@
 
 ### Udacity Self-Driving Car Engineer Nanodegree Program
 
---
-
 The goal of this project are the following:
 
 * Write (in C++) a path planner (including a trajectory generator) that can be used to guide the simulated vehicle in driving on a highway provided by Udacity [Term 3 Simulator](https://github.com/udacity/self-driving-car-sim/releases/tag/T3_v1.2).
