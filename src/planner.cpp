@@ -13,6 +13,7 @@ Behaviour::Behaviour(int lane,
   current_lane = lane;
   target_lane = lane;
   current_behaviour = keep_lane;
+  // copy map information to members
   std::copy(map_s.begin(), map_s.end(), std::back_inserter(map_waypoints_s));
   std::copy(map_x.begin(), map_x.end(), std::back_inserter(map_waypoints_x));
   std::copy(map_y.begin(), map_y.end(), std::back_inserter(map_waypoints_y));
@@ -39,6 +40,7 @@ void Behaviour::set_ego_status(double ego_s, double ego_d, double ego_speed,
   for (int i = 0; i < 3; i++) {
     agents_by_lane[i].clear();
   }
+  // re-arrange agent vehicles in a vector indexed by lane number
   for (auto& st : sf) {
     Agent a;
     double agent_vx = st[3];
@@ -46,6 +48,7 @@ void Behaviour::set_ego_status(double ego_s, double ego_d, double ego_speed,
     double agent_s = st[5];
     double agent_d = st[6];
     a.lane = (int) (agent_d / Config::lane_width);
+    // consider only those driving in the same direction as ego
     if (a.lane >= 0 && a.lane < Config::number_of_lanes) {
       double agent_v = sqrt(agent_vx * agent_vx + agent_vy * agent_vy);
       // predict where the agent is going to be
@@ -363,9 +366,6 @@ double Path::motion_plan(double ego_pred_s, Agent agent_ahead,
   // generate waypoints to follow
   double vel = ref_vel / Config::mps_to_mph;
   // set a target point (in X-Y coordinate)
-  double t_x = 0.5 * desired_acc * (pts * Config::dt) * (pts * Config::dt);
-  double t_y = sp(t_x);
-  double t_d = distance(0.0, 0.0, t_x, t_y);
   double px = 0.0;
   double py;
   for (int i = 0; i < pts; i++) {
