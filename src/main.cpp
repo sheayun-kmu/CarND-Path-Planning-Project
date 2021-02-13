@@ -7,7 +7,6 @@
 #include "Eigen-3.3/Eigen/QR"
 #include "helpers.h"
 #include "json.hpp"
-#include "spline.h"
 #include "planner.h"
 
 // for convenience
